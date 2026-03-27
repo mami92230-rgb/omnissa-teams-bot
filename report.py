@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Omnissa Intelligence > Teams : distribution iOS iPads - version compacte."""
+"""Omnissa Intelligence > Teams : distribution iOS iPads."""
 
 import os, json, urllib.request, base64
 from datetime import datetime, timezone
@@ -70,17 +70,29 @@ def get_versions(token):
     return get_versions_preview(token)
 
 
+def major_version(v):
+    try:
+        return int(v.split(".")[0])
+    except (ValueError, AttributeError, IndexError):
+        return 0
+
+
 def version_key(v):
-    """Tri par numero de version decroissant (26.x avant 18.x)."""
     try:
         return tuple(int(x) for x in v.split("."))
     except (ValueError, AttributeError):
         return (0,)
 
 
-def build_chart_url(sorted_v, total):
-    top = sorted_v[:8]
-    others = sum(c for _, c in sorted_v[8:])
+def filter_versions(versions):
+    """Garde uniquement les versions >= 18."""
+    filtered = {v: c for v, c in versions.items() if major_version(v) >= 18}
+    return filtered
+
+
+def build_chart_url(by_count, total):
+    top = by_count[:8]
+    others = sum(c for _, c in by_count[8:])
     if others > 0:
         top.append(("Autres", others))
     labels = [f"{v} ({round(c/total*100,1)}%)" for v, c in top]
@@ -97,30 +109,43 @@ def build_chart_url(sorted_v, total):
     }
     resp = http("https://quickchart.io/chart/create", "POST",
         {"Content-Type": "application/json"},
-        json.dumps({"chart": chart_config, "width": 800, "height": 400, "backgroundColor": "white", "format": "png", "devicePixelRatio": 2}))
+        json.dumps({"chart": chart_config, "width": 900, "height": 500, "backgroundColor": "white", "format": "png", "devicePixelRatio": 2}))
     return resp.get("url", "")
 
 
-def build_card(chart_url, sorted_v, total):
+def build_card(chart_url, versions, total_fleet):
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    total = sum(versions.values())
 
-    # Top 5 versions (triees par version desc = 26.x en premier)
-    top5_lines = []
-    for i, (v, c) in enumerate(sorted_v[:5]):
-        top5_lines.append(f"{i+1}. **{v}** — {c} ({round(c/total*100,1)}%)")
-    top5_text = "\n\n".join(top5_lines)
+    # Toutes les versions 26.x triees par version desc
+    v26 = sorted([(v, c) for v, c in versions.items() if v.startswith("26.")], key=lambda x: version_key(x[0]), reverse=True)
+    total_v26 = sum(c for _, c in v26)
 
-    others_count = sum(c for _, c in sorted_v[5:])
-    others_nb = len(sorted_v) - 5
-    summary = f"+ {others_nb} autres : {others_count} iPads ({round(others_count/total*100,1)}%)"
+    # Versions 18.x-25.x triees par nombre desc
+    autres = sorted([(v, c) for v, c in versions.items() if not v.startswith("26.")], key=lambda x: -x[1])
+    total_autres = sum(c for _, c in autres)
+
+    # Texte 26.x : toutes les versions sur une ligne
+    text_26 = " | ".join(f"**{v}** : {c}" for v, c in v26)
+
+    # Top 5 anciennes
+    text_old = " | ".join(f"**{v}** : {c}" for v, c in autres[:5])
 
     body = [
-        {"type": "TextBlock", "text": f"**iPads - Distribution iOS** | {total} iPads | {now}", "wrap": True, "size": "Medium"},
+        {"type": "TextBlock", "text": f"**iPads - Distribution iOS** | {total_fleet} iPads | {now}", "wrap": True, "size": "Medium"},
     ]
     if chart_url:
         body.append({"type": "Image", "url": chart_url, "size": "Stretch"})
-    body.append({"type": "TextBlock", "text": top5_text, "wrap": True, "size": "Small", "spacing": "Small"})
-    body.append({"type": "TextBlock", "text": summary, "isSubtle": True, "size": "Small", "spacing": "None"})
+
+    body.append({"type": "TextBlock", "text": f"iPadOS 26 : **{total_v26}** iPads ({round(total_v26/total*100,1)}%)", "wrap": True, "size": "Small", "spacing": "Medium", "color": "Good"})
+    body.append({"type": "TextBlock", "text": text_26, "wrap": True, "size": "Small", "spacing": "None"})
+
+    body.append({"type": "TextBlock", "text": f"iPadOS 18-25 : **{total_autres}** iPads ({round(total_autres/total*100,1)}%)", "wrap": True, "size": "Small", "spacing": "Medium", "color": "Accent"})
+    body.append({"type": "TextBlock", "text": text_old, "wrap": True, "size": "Small", "spacing": "None"})
+
+    rest = len(autres) - 5
+    if rest > 0:
+        body.append({"type": "TextBlock", "text": f"+ {rest} autres versions", "isSubtle": True, "size": "Small", "spacing": "None"})
 
     return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None,
         "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.5", "body": body}}]}
@@ -128,13 +153,17 @@ def build_card(chart_url, sorted_v, total):
 
 def main():
     token = get_token()
-    versions = get_versions(token)
-    # Tri par version decroissante (26.x en premier)
-    sorted_v = sorted(versions.items(), key=lambda x: version_key(x[0]), reverse=True)
-    total = sum(versions.values())
-    print(f"[OK] {total} iPads, {len(versions)} versions")
-    chart_url = build_chart_url(sorted_v, total)
-    card = build_card(chart_url, sorted_v, total)
+    all_versions = get_versions(token)
+    total_fleet = sum(all_versions.values())
+
+    # Filtrer : garder seulement >= 18
+    versions = filter_versions(all_versions)
+    dropped = total_fleet - sum(versions.values())
+    print(f"[OK] {total_fleet} iPads total, {len(versions)} versions (>= 18), {dropped} exclus (< 18)")
+
+    by_count = sorted(versions.items(), key=lambda x: -x[1])
+    chart_url = build_chart_url(by_count, sum(versions.values()))
+    card = build_card(chart_url, versions, total_fleet)
     http(TEAMS_WEBHOOK, "POST", {"Content-Type": "application/json"}, json.dumps(card))
     print("[DONE] Envoye sur Teams")
 
