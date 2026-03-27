@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Omnissa Intelligence > Teams : camembert distribution iOS iPads."""
+"""Omnissa Intelligence > Teams : distribution iOS iPads."""
 
 import os, json, urllib.request, urllib.parse, base64
 from datetime import datetime, timezone
@@ -32,7 +32,6 @@ def get_token():
     return data["access_token"]
 
 
-# -- Methode 1 : Trend endpoint (1 seul appel, donnees agregees) --
 def get_versions_trend(token):
     if not TREND_ID:
         raise Exception("TREND_ID non configure")
@@ -51,7 +50,6 @@ def get_versions_trend(token):
     return versions
 
 
-# -- Methode 2 : Preview pagine (fallback) --
 def get_versions_preview(token):
     import time
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -78,7 +76,6 @@ def get_versions_preview(token):
 
 
 def get_versions(token):
-    """Essaie trend d'abord, fallback sur preview."""
     if TREND_ID:
         try:
             return get_versions_trend(token)
@@ -87,140 +84,119 @@ def get_versions(token):
     return get_versions_preview(token)
 
 
-# -- Camembert via QuickChart.io --
 def build_chart_url(versions):
     sorted_v = sorted(versions.items(), key=lambda x: -x[1])
     total = sum(versions.values())
-
-    top = sorted_v[:10]
-    others = sum(c for _, c in sorted_v[10:])
+    top = sorted_v[:8]
+    others = sum(c for _, c in sorted_v[8:])
     if others > 0:
         top.append(("Autres", others))
-
-    labels = [v for v, _ in top]
+    labels = []
+    for v, c in top:
+        pct = round(c / total * 100, 1)
+        labels.append(f"{v} ({pct}%)")
     data = [c for _, c in top]
-
     chart_config = {
         "type": "doughnut",
         "data": {
             "labels": labels,
-            "datasets": [{
-                "data": data,
-                "backgroundColor": [
-                    "#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0",
-                    "#9966FF", "#FF9F40", "#E7E9ED", "#7BC67E",
-                    "#C9CBCF", "#F7464A", "#949FB1"
-                ]
-            }]
+            "datasets": [{"data": data,
+                "backgroundColor": ["#0078D4","#00BCF2","#FFB900","#E74856","#744DA9","#10893E","#FF8C00","#E3008C","#B4B4B4"],
+                "borderWidth": 2, "borderColor": "#fff"}]
         },
-        "options": {
-            "plugins": {
-                "title": {
-                    "display": True,
-                    "text": f"Distribution iOS - {total} iPads",
-                    "font": {"size": 18}
-                },
-                "datalabels": {
-                    "display": True,
-                    "color": "#fff",
-                    "font": {"size": 11, "weight": "bold"}
-                }
-            }
-        }
+        "options": {"plugins": {
+            "legend": {"position": "right", "labels": {"font": {"size": 13}, "padding": 12, "usePointStyle": True}},
+            "datalabels": {"display": True, "color": "#fff", "font": {"size": 13, "weight": "bold"},
+                "formatter": "(val, ctx) => { return (val / ctx.chart.getDatasetMeta(0).total * 100).toFixed(1) + '%'; }"}
+        }}
     }
-
-    chart_json = json.dumps(chart_config)
-    chart_url = f"https://quickchart.io/chart?c={urllib.parse.quote(chart_json)}&w=600&h=400&bkg=white&f=png"
-    print(f"[OK] Chart URL generee ({len(chart_url)} chars)")
+    chart_payload = json.dumps({"chart": chart_config, "width": 800, "height": 450, "backgroundColor": "white", "format": "png", "devicePixelRatio": 2})
+    req = urllib.request.Request("https://quickchart.io/chart/create", method="POST",
+        headers={"Content-Type": "application/json"}, data=chart_payload.encode())
+    with urllib.request.urlopen(req, timeout=30) as r:
+        resp = json.loads(r.read())
+    chart_url = resp.get("url", "")
+    print(f"[OK] Chart URL: {chart_url}")
     return chart_url, sorted_v, total
 
 
-# -- Adaptive Card avec image camembert --
+def progress_bar(pct, width=15):
+    filled = round(pct / 100 * width)
+    return chr(9608) * filled + chr(9617) * (width - filled)
+
+
 def build_card(chart_url, versions, total):
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-
-    rows = []
-    for version, count in versions[:10]:
+    body = [
+        {"type": "ColumnSet", "columns": [
+            {"type": "Column", "width": "auto", "items": [
+                {"type": "TextBlock", "text": chr(128241), "size": "Large"}]},
+            {"type": "Column", "width": "stretch", "items": [
+                {"type": "TextBlock", "text": "iPads - Distribution iOS", "weight": "Bolder", "size": "Large", "wrap": True},
+                {"type": "TextBlock", "text": now, "isSubtle": True, "spacing": "None", "size": "Small"}]}
+        ]},
+        {"type": "TextBlock", "text": " ", "spacing": "Small"},
+        {"type": "ColumnSet", "columns": [
+            {"type": "Column", "width": "1", "items": [
+                {"type": "TextBlock", "text": str(total), "weight": "Bolder", "size": "ExtraLarge", "horizontalAlignment": "Center", "color": "Accent"},
+                {"type": "TextBlock", "text": "iPads", "horizontalAlignment": "Center", "isSubtle": True, "spacing": "None", "size": "Small"}]},
+            {"type": "Column", "width": "1", "items": [
+                {"type": "TextBlock", "text": str(len(versions)), "weight": "Bolder", "size": "ExtraLarge", "horizontalAlignment": "Center", "color": "Accent"},
+                {"type": "TextBlock", "text": "versions", "horizontalAlignment": "Center", "isSubtle": True, "spacing": "None", "size": "Small"}]},
+            {"type": "Column", "width": "1", "items": [
+                {"type": "TextBlock", "text": versions[0][0] if versions else "-", "weight": "Bolder", "size": "ExtraLarge", "horizontalAlignment": "Center", "color": "Good"},
+                {"type": "TextBlock", "text": "top version", "horizontalAlignment": "Center", "isSubtle": True, "spacing": "None", "size": "Small"}]}
+        ]}
+    ]
+    if chart_url:
+        body.append({"type": "Image", "url": chart_url, "size": "Stretch", "spacing": "Medium"})
+    body.append({"type": "TextBlock", "text": "**Top 10 versions**", "spacing": "Medium", "separator": True})
+    top10 = versions[:10]
+    for i, (version, count) in enumerate(top10):
         pct = round(count / total * 100, 1)
-        rows.append(f"**{version}** : {count} ({pct}%)")
-
-    others = sum(c for _, c in versions[10:])
-    if others > 0:
-        rows.append(f"**Autres** : {others} ({round(others/total*100, 1)}%)")
-
-    summary_text = " | ".join(rows[:6])
-    if len(rows) > 6:
-        summary_text += f" | +{len(rows)-6} autres..."
-
-    card = {
-        "type": "message",
-        "attachments": [{
-            "contentType": "application/vnd.microsoft.card.adaptive",
-            "contentUrl": None,
-            "content": {
-                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                "type": "AdaptiveCard",
-                "version": "1.4",
-                "body": [
-                    {
-                        "type": "TextBlock",
-                        "text": "iPads - Mises a jour iOS",
-                        "weight": "Bolder",
-                        "size": "Large",
-                        "style": "heading"
-                    },
-                    {
-                        "type": "TextBlock",
-                        "text": f"{now} | {total} iPads | {len(versions)} versions",
-                        "isSubtle": True,
-                        "spacing": "None"
-                    },
-                    {
-                        "type": "Image",
-                        "url": chart_url,
-                        "size": "Large",
-                        "altText": "Camembert distribution iOS"
-                    },
-                    {
-                        "type": "TextBlock",
-                        "text": summary_text,
-                        "wrap": True,
-                        "size": "Small",
-                        "spacing": "Medium"
-                    }
-                ]
-            }
-        }]
-    }
-    return card
+        bar = progress_bar(pct)
+        body.append({"type": "ColumnSet", "spacing": "Small", "columns": [
+            {"type": "Column", "width": "5px", "items": [
+                {"type": "TextBlock", "text": f"{i+1}.", "weight": "Bolder", "size": "Small"}]},
+            {"type": "Column", "width": "25px", "items": [
+                {"type": "TextBlock", "text": f"**{version}**", "size": "Small"}]},
+            {"type": "Column", "width": "35px", "items": [
+                {"type": "TextBlock", "text": bar, "size": "Small", "fontType": "Monospace"}]},
+            {"type": "Column", "width": "15px", "items": [
+                {"type": "TextBlock", "text": str(count), "weight": "Bolder", "size": "Small", "horizontalAlignment": "Right"}]},
+            {"type": "Column", "width": "12px", "items": [
+                {"type": "TextBlock", "text": f"{pct}%", "size": "Small", "horizontalAlignment": "Right", "isSubtle": True}]}
+        ]})
+    others_count = sum(c for _, c in versions[10:])
+    if others_count > 0:
+        others_pct = round(others_count / total * 100, 1)
+        nb_others = len(versions) - 10
+        body.append({"type": "TextBlock", "text": f"+ {nb_others} autres versions : {others_count} iPads ({others_pct}%)",
+            "isSubtle": True, "size": "Small", "spacing": "Small"})
+    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None,
+        "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.5", "body": body}}]}
 
 
 def post_teams(card):
-    http(TEAMS_WEBHOOK, "POST",
-         {"Content-Type": "application/json"},
-         json.dumps(card))
+    http(TEAMS_WEBHOOK, "POST", {"Content-Type": "application/json"}, json.dumps(card))
     print("[OK] Message envoye sur Teams")
 
 
 def main():
     print("=" * 50)
-    print("Omnissa Intelligence > Teams Report (camembert)")
+    print("Omnissa Intelligence > Teams Report")
     print("=" * 50)
-
     token = get_token()
     versions = get_versions(token)
-
     sorted_v = sorted(versions.items(), key=lambda x: -x[1])
     total = sum(versions.values())
-
     print(f"\n--- Distribution iOS ({total} iPads, {len(versions)} versions) ---")
     for v, c in sorted_v[:15]:
         print(f"  {v}: {c} ({round(c/total*100, 1)}%)")
-
     chart_url, sorted_v, total = build_chart_url(versions)
     card = build_card(chart_url, sorted_v, total)
     post_teams(card)
-    print("\n[DONE] Camembert envoye sur Teams !")
+    print("\n[DONE] Rapport envoye sur Teams !")
 
 
 if __name__ == "__main__":
