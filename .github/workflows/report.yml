@@ -20,4 +20,5 @@ jobs:
           OMNISSA_CLIENT_SECRET: ${{ secrets.OMNISSA_CLIENT_SECRET }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
           OMNISSA_REPORT_ID: ${{ secrets.OMNISSA_REPORT_ID }}
+          OMNISSA_TREND_ID: ${{ secrets.OMNISSA_TREND_ID }}
         run: python report.py
