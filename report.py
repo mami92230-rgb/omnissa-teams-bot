@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Omnissa Intelligence > Teams Webhook : rapport iPads iOS."""
 
-import os, json, urllib.request, urllib.parse
+import os, json, urllib.request, urllib.parse, base64
 from datetime import datetime, timezone
 
-TOKEN_URL = "https://auth.eu1.data.workspaceone.com/oauth/token?grant_type=client_credentials"
+TOKEN_URL = "https://auth.eu1.data.workspaceone.com/oauth/token"
 API_BASE  = "https://eu1.data.workspaceone.com/v2"
 CLIENT_ID = os.environ["OMNISSA_CLIENT_ID"]
 CLIENT_SECRET = os.environ["OMNISSA_CLIENT_SECRET"]
@@ -16,18 +16,22 @@ def http(url, method="GET", headers=None, body=None):
     req = urllib.request.Request(url, method=method, headers=headers or {})
     if body:
         req.data = body if isinstance(body, bytes) else body.encode()
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        print(f"HTTP {e.code}: {e.reason}")
+        print(f"Response: {e.read().decode()}")
+        raise
 
 
 def get_token():
-    body = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-    })
-    data = http(TOKEN_URL, "POST",
-                {"Content-Type": "application/x-www-form-urlencoded"}, body)
+    # Basic Auth: base64(client_id:client_secret)
+    creds = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
+    data = http(TOKEN_URL, "POST", {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {creds}"
+    }, "grant_type=client_credentials")
     return data["access_token"]
 
 
