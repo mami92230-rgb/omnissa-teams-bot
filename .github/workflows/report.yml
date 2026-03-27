@@ -1,0 +1,23 @@
+name: Omnissa Intelligence - Teams Report
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run report
+        env:
+          OMNISSA_CLIENT_ID: ${{ secrets.OMNISSA_CLIENT_ID }}
+          OMNISSA_CLIENT_SECRET: ${{ secrets.OMNISSA_CLIENT_SECRET }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          OMNISSA_REPORT_ID: ${{ secrets.OMNISSA_REPORT_ID }}
+        run: python report.py
